@@ -1,0 +1,131 @@
+#Import libraries
+from bs4 import BeautifulSoup
+from selenium import webdriver
+import json
+import time
+from urllib.request import urlopen 
+import pandas as pd
+
+#Obtain and parse html from the main page
+wd = webdriver.Chrome("C:/3D Geneomics/Task=DNAZoo JSON parsing/chromedriver-win64/chromedriver-win64/chromedriver.exe")
+wd.get('https://dnazoo.s3.wasabisys.com/index.html?prefix=')
+time.sleep(2)    #we need this to request elements's code from the completly loaded page. Adjust according to your internet speed
+html_text = wd.execute_script("return document.body.innerHTML;")
+soup = BeautifulSoup(html_text, 'lxml')
+wd.close()
+
+#Find all content with attribute <a> (contein links)
+Files = soup.find_all('a')
+
+#Create list of links to species' files. Remove other links
+Links = []
+for i in Files:
+    i = str(i).removeprefix('<a href="')
+    i = str(i).removesuffix('/</a>')
+    j = -1
+    while j < len(str(i)):
+        if i[j] == '/':
+            i = str(i).removesuffix('/')
+            break
+        else:
+            i = str(i).removesuffix(str(i)[j])  
+    Links.append(i)
+Links = Links[1: (-3)]
+
+ 
+
+species_list_raw = open("C:/3D Geneomics/Task=NCBI accesion for species/Species_for_Egor.txt").readlines()
+species_list = []
+for i in species_list_raw:
+    i = str(i).removesuffix("\n")
+    species_list.append(i)
+
+#Output_data_table = pd.DataFrame(columns = ("Species", "SRA")) 
+k = 0
+for Link in Links:
+    try:
+        dr = webdriver.Chrome("C:/3D Geneomics/Task=DNAZoo JSON parsing/chromedriver-win64/chromedriver-win64/chromedriver.exe")
+        dr.get(Link)
+        time.sleep(2) #we need this to request elements's code from the completly loaded page. Adjust according to your internet speed
+        src = dr.execute_script("return document.body.innerHTML;")
+        JSON = []   #here we will store link to json file
+        soup = BeautifulSoup(src, 'lxml')
+        Links_to_files = soup.find_all('a')
+        for i in list(Links_to_files):
+            if "README.json" in i:
+                JSON.append(i)
+        for link in JSON:
+            link = str(link).removeprefix('<a href="')
+            while True:
+                if link[-1] == '\"':
+                    link = str(link).removesuffix('\"')
+                    JSON = link
+                    break
+                else:
+                    link = str(link).removesuffix(str(link)[-1])
+        dr.close()    
+    
+       
+        for unit in species_list:
+            if unit in JSON:
+                response = urlopen(JSON)
+                data_json = json.loads(response.read())
+                String = [unit]
+                for i in range(0, len(data_json["hicSamples"])):
+                    for j in range(0, len(data_json["hicSamples"][i]["libraries"])):
+                        try:
+                            Name = data_json["hicSamples"][i]["libraries"][j]["name"]
+                            dr = webdriver.Chrome("C:/3D Geneomics/Task=DNAZoo JSON parsing/chromedriver-win64/chromedriver-win64/chromedriver.exe")
+                            dr.get(f"https://www.ncbi.nlm.nih.gov/sra/?term={Name}")
+                            time.sleep(2) #we need this to request elements's code from the completly loaded page. Adjust according to your internet speed
+                            src = dr.execute_script("return document.body.innerHTML;")
+                            soup = BeautifulSoup(src, 'lxml')
+                            dr.close()
+                            SRA_raw = soup.find_all('td', {"align" : "left"})
+                            SRA_raw = str(SRA_raw[0]).removesuffix("</a></td>")
+                            SRA = SRA_raw.split(">")[-1]
+                            String.append(SRA)
+                        except:
+                            Links_to_SRA = []
+                            Name = data_json["hicSamples"][i]["libraries"][j]["name"]
+                            dr = webdriver.Chrome("C:/3D Geneomics/Task=DNAZoo JSON parsing/chromedriver-win64/chromedriver-win64/chromedriver.exe")
+                            dr.get(f"https://www.ncbi.nlm.nih.gov/sra/?term={Name}")
+                            time.sleep(2) #we need this to request elements's code from the completly loaded page. Adjust according to your internet speed
+                            src = dr.execute_script("return document.body.innerHTML;")
+                            soup = BeautifulSoup(src, 'lxml')
+                            dr.close()
+                            Links_raw = soup.find_all('a', href = True)
+                            for link in Links_raw:
+                                if "sra/SR" in str(link['href']):
+                                    Links_to_SRA.append("https://www.ncbi.nlm.nih.gov/" + str(link['href']))
+                            for link in Links_to_SRA:
+                                dr = webdriver.Chrome("C:/3D Geneomics/Task=DNAZoo JSON parsing/chromedriver-win64/chromedriver-win64/chromedriver.exe")
+                                dr.get(link)
+                                time.sleep(2) #we need this to request elements's code from the completly loaded page. Adjust according to your internet speed
+                                src = dr.execute_script("return document.body.innerHTML;")
+                                soup = BeautifulSoup(src, 'lxml')
+                                dr.close()
+                                SRA_raw = soup.find_all('td', {"align" : "left"})
+                                SRA_raw = str(SRA_raw[0]).removesuffix("</a></td>")
+                                SRA = SRA_raw.split(">")[-1]
+                                String.append(SRA)
+                            
+                            
+                            
+                String = pd.Series({"Species": String[0], "SRA": String[1:]})
+                print(String)
+                Output_data_table = Output_data_table.append(String, ignore_index=True)
+                
+                
+
+                                   
+                
+                
+                         
+            else:
+                continue
+
+    except:
+        print(f"Operation failed for {Link}")
+    
+Output_data_table.to_csv("C:/3D Geneomics/Task=NCBI accesion for species/Data_output.csv", sep = " ")                
